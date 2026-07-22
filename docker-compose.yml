@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  yandex-telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yandex_telegram_bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      # Монтируем .env чтобы можно было изменять токены без пересборки контейнера
+      - ./.env:/app/.env
