@@ -53,7 +53,7 @@ TEXTS = {
         'btn_week': "📆 За неделю",
         'btn_custom': "📅 Выбрать период",
         'btn_lang': "🌐 Сменить язык",
-        'ask_range': "📅 Введите дату или диапазон дат (например:\n• `21.07.2026 - 23.07.2026`\n• `21.07 - 23.07`\n• `21.07`):",
+        'ask_range': "📅 Введите дату или диапазон дат, например:\n• 21.07.2026 - 23.07.2026\n• 21.07 - 23.07\n• 21.07",
         'err_date_fmt': "❌ Не удалось распознать формат дат. Пожалуйста, введите в формате ДД.ММ.ГГГГ или ДД.ММ:",
         'cancel': "❌ Выбор периода отменён.",
         'no_records': "📭 На выбранный период записей не найдено.",
@@ -69,7 +69,7 @@ TEXTS = {
         'btn_week': "📆 For the week",
         'btn_custom': "📅 Select period",
         'btn_lang': "🌐 Change language",
-        'ask_range': "📅 Enter a date or a date range (for example:\n• `21.07.2026 - 23.07.2026`\n• `21.07 - 23.07`\n• `21.07`):",
+        'ask_range': "📅 Enter a date or a date range, for example:\n• 21.07.2026 - 23.07.2026\n• 21.07 - 23.07\n• 21.07",
         'err_date_fmt': "❌ Failed to parse date format. Please enter as DD.MM.YYYY or DD.MM:",
         'cancel': "❌ Period selection cancelled.",
         'no_records': "📭 No records found for the selected period.",
@@ -372,6 +372,7 @@ async def choose_period_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info(">>> [ЗАПРОС СВОЙ ПЕРИОД]")
     lang = get_user_lang(context)
     t = TEXTS[lang]
+    # Запрашиваем ввод диапазона одним сообщением
     await update.message.reply_text(t['ask_range'])
     return WAIT_DATE_RANGE
 
