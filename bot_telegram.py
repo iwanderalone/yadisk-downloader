@@ -103,6 +103,92 @@ def get_yandex_client() -> YandexSharedDiskClient:
         )
     return YandexSharedDiskClient(oauth_token=token, vd_hash=vd_hash)
 
+# ==================== УНИВЕРСАЛЬНЫЙ ПАРСЕР ДАТЫ ====================
+def parse_date(val, sheet_name: str) -> datetime:
+    """
+    Интеллектуальный парсер даты. Поддерживает форматы:
+    - Объекты datetime / Timestamp (из Excel)
+    - Строки вида '21.07.2026'
+    - Текст месяца без года: '5 July', '5 июля' (год берется из названия листа)
+    - Текст месяца с годом: '5 July 2026', '5 июля 2025'
+    """
+    if pd.isna(val):
+        return None
+    if isinstance(val, (datetime, pd.Timestamp)):
+        return val
+        
+    val_str = str(val).strip()
+    if not val_str:
+        return None
+        
+    # 1. Пробуем стандартные форматы с разделителями
+    for fmt in ('%d.%m.%Y', '%d.%m.%y', '%Y-%m-%d'):
+        try:
+            return pd.to_datetime(val_str, format=fmt)
+        except Exception:
+            continue
+            
+    # 2. Пробуем авто-парсинг pandas (для англоязычных форматов)
+    try:
+        dt = pd.to_datetime(val_str, errors='raise')
+        # Если год определился как 1 или 1900/2001 (из-за отсутствия года в ячейке)
+        if dt.year <= 1900 or dt.year == 2001:
+            inferred_year = datetime.now().year
+            # Пытаемся достать 4-значный год из имени листа (например, 'JULY 2027')
+            for word in sheet_name.split():
+                if word.isdigit() and len(word) == 4:
+                    inferred_year = int(word)
+                    break
+            dt = dt.replace(year=inferred_year)
+        return dt
+    except Exception:
+        pass
+        
+    # 3. Ручной разбор для русскоязычных месяцев (например, '5 июля', '5 июля 2027')
+    months_ru = {
+        'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4, 'май': 5, 'мая': 5,
+        'июн': 6, 'июл': 7, 'авг': 8, 'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
+    }
+    months_en = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5,
+        'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    }
+    
+    try:
+        parts = val_str.lower().split()
+        if len(parts) >= 2:
+            day = int(parts[0])
+            month_name = parts[1]
+            month = None
+            
+            # Поиск месяца в русском словаре
+            for k, v in months_ru.items():
+                if month_name.startswith(k):
+                    month = v
+                    break
+            # Поиск месяца в английском словаре (на всякий случай)
+            if month is None:
+                for k, v in months_en.items():
+                    if month_name.startswith(k):
+                        month = v
+                        break
+                        
+            if month is not None:
+                year = datetime.now().year
+                if len(parts) >= 3 and parts[2].isdigit():
+                    year = int(parts[2])
+                else:
+                    # Пробуем вытащить год из имени листа
+                    for word in sheet_name.split():
+                        if word.isdigit() and len(word) == 4:
+                            year = int(word)
+                            break
+                return pd.Timestamp(year=year, month=month, day=day)
+    except Exception:
+        pass
+        
+    return None
+
 # ==================== СКАЧИВАНИЕ С ОБЩЕГО ДИСКА ====================
 def download_table() -> pd.DataFrame:
     now = datetime.now()
@@ -140,8 +226,11 @@ def download_table() -> pd.DataFrame:
             continue
         df['Date'] = df['Date'].ffill()
         df.dropna(subset=['Date'], inplace=True)
-        df['Date'] = pd.to_datetime(df['Date'], format='%d.%m.%Y', errors='coerce')
+        
+        # Применяем интеллектуальный парсер к датам
+        df['Date'] = df['Date'].apply(lambda val: parse_date(val, sheet_name))
         df.dropna(subset=['Date'], inplace=True)
+        
         dfs.append(df)
 
     full_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
