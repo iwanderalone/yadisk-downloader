@@ -38,9 +38,10 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 YANDEX_OAUTH_TOKEN = os.getenv("YANDEX_OAUTH_TOKEN")
 YANDEX_VD_HASH = os.getenv("YANDEX_VD_HASH")
 REMOTE_FILE_PATH = os.getenv("YANDEX_FILE_PATH", "table.xlsx")
+ADMIN_TELEGRAM_ID = os.getenv("ADMIN_TELEGRAM_ID", "791647629")
 
 CACHE_LIFETIME = 300
-WAIT_DATE_RANGE = 0  # Единственное состояние диалога для ввода периода
+WAIT_DATE_RANGE, WAIT_FEEDBACK = range(2)  # Состояния диалогов
 
 _cache = {"df": None, "last_fetch": datetime.min}
 
@@ -52,10 +53,13 @@ TEXTS = {
         'btn_today': "📅 Сегодня",
         'btn_week': "📆 За неделю",
         'btn_custom': "📅 Выбрать период",
+        'btn_feedback': "✍️ Обратная связь",
         'btn_lang': "🌐 Сменить язык",
         'ask_range': "📅 Введите дату или диапазон дат, например:\n• 21.07.2026 - 23.07.2026\n• 21.07 - 23.07\n• 21.07",
+        'ask_feedback': "✍️ Пожалуйста, напишите ваш отзыв, пожелание или сообщение об ошибке:",
+        'feedback_thanks': "✅ Спасибо! Ваша обратная связь успешно отправлена.",
         'err_date_fmt': "❌ Не удалось распознать формат дат. Пожалуйста, введите в формате ДД.ММ.ГГГГ или ДД.ММ:",
-        'cancel': "❌ Выбор периода отменён.",
+        'cancel': "❌ Операция отменена.",
         'no_records': "📭 На выбранный период записей не найдено.",
         'caption': "📄 События за {}",
         'err_download': "❌ Ошибка скачивания с Яндекс Диска: {}",
@@ -68,10 +72,13 @@ TEXTS = {
         'btn_today': "📅 Today",
         'btn_week': "📆 For the week",
         'btn_custom': "📅 Select period",
+        'btn_feedback': "✍️ Send Feedback",
         'btn_lang': "🌐 Change language",
         'ask_range': "📅 Enter a date or a date range, for example:\n• 21.07.2026 - 23.07.2026\n• 21.07 - 23.07\n• 21.07",
+        'ask_feedback': "✍️ Please write your feedback, suggestion, or bug report:",
+        'feedback_thanks': "✅ Thank you! Your feedback has been successfully sent.",
         'err_date_fmt': "❌ Failed to parse date format. Please enter as DD.MM.YYYY or DD.MM:",
-        'cancel': "❌ Period selection cancelled.",
+        'cancel': "❌ Operation cancelled.",
         'no_records': "📭 No records found for the selected period.",
         'caption': "📄 Events for {}",
         'err_download': "❌ Error downloading from Yandex Disk: {}",
@@ -87,7 +94,8 @@ def get_period_keyboard(lang: str) -> ReplyKeyboardMarkup:
     t = TEXTS[lang]
     keyboard = [
         [t['btn_today'], t['btn_week']],
-        [t['btn_custom'], t['btn_lang']]
+        [t['btn_custom'], t['btn_feedback']],
+        [t['btn_lang']]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -173,12 +181,7 @@ def parse_date(val, sheet_name: str) -> datetime:
 
 # ==================== ПАРСЕР ДИАПАЗОНА ДАТ (ДЛЯ ВВОДА ПОЛЬЗОВАТЕЛЕМ) ====================
 def parse_user_date_range(text: str) -> tuple[datetime, datetime] | None:
-    """
-    Разбирает строку с одной датой или диапазоном дат.
-    Поддерживает: '21.07.2026 - 23.07.2026', '21.07-23.07', '21.07.2026' и т.д.
-    """
     text = text.strip()
-    # Регулярное выражение для поиска дат типа DD.MM или DD.MM.YYYY
     date_pattern = r'(\d{1,2})[\.\-/](\d{1,2})(?:[\.\-/](\d{2,4}))?'
     matches = re.findall(date_pattern, text)
     
@@ -200,10 +203,8 @@ def parse_user_date_range(text: str) -> tuple[datetime, datetime] | None:
             return None
             
     if len(dates) == 1:
-        # Диапазон из одного дня
         return dates[0], dates[0]
     elif len(dates) >= 2:
-        # Диапазон между двумя датами
         return min(dates[0], dates[1]), max(dates[0], dates[1])
         
     return None
@@ -372,7 +373,6 @@ async def choose_period_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info(">>> [ЗАПРОС СВОЙ ПЕРИОД]")
     lang = get_user_lang(context)
     t = TEXTS[lang]
-    # Запрашиваем ввод диапазона одним сообщением
     await update.message.reply_text(t['ask_range'])
     return WAIT_DATE_RANGE
 
@@ -404,12 +404,54 @@ async def receive_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await send_report(update, context, df[mask], label)
     return ConversationHandler.END
 
+# ==================== ОБРАБОТЧИКИ ОБРАТНОЙ СВЯЗИ ====================
+async def ask_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(">>> [ЗАПРОС НА ОБРАТНУЮ СВЯЗЬ]")
+    lang = get_user_lang(context)
+    t = TEXTS[lang]
+    await update.message.reply_text(t['ask_feedback'])
+    return WAIT_FEEDBACK
+
+async def receive_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lang = get_user_lang(context)
+    t = TEXTS[lang]
+    feedback_text = update.message.text.strip()
+    user = update.effective_user
+    
+    logger.info(">>> [ПОЛУЧЕН ОТЗЫВ]: '%s' от user_id=%s", feedback_text, user.id if user else "None")
+    
+    # Пересылаем отзыв администратору
+    admin_id = os.getenv("ADMIN_TELEGRAM_ID", ADMIN_TELEGRAM_ID)
+    if admin_id:
+        username_str = f"@{user.username}" if user.username else "нет username"
+        first_name = user.first_name or ""
+        last_name = user.last_name or ""
+        name_str = f"{first_name} {last_name}".strip() or "Без имени"
+        
+        admin_message = (
+            f"🔔 *Получен новый отзыв!*\n\n"
+            f"👤 *Отправитель:* {name_str} ({username_str})\n"
+            f"🆔 *ID:* `{user.id}`\n\n"
+            f"📝 *Текст отзыва:*\n{feedback_text}"
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=admin_id,
+                text=admin_message,
+                parse_mode="Markdown"
+            )
+            logger.info("Отзыв успешно переслан администратору ID=%s", admin_id)
+        except Exception as e:
+            logger.error("Не удалось отправить отзыв администратору: %s", e)
+            
+    await update.message.reply_text(t['feedback_thanks'])
+    return ConversationHandler.END
+
 # ==================== ПРЯМОЙ ВВОД ДАТЫ (ВНЕ ДИАЛОГА) ====================
 async def handle_direct_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     parsed = parse_user_date_range(text)
     if not parsed:
-        # Если в сообщении нет распознанной даты, просто пропускаем его дальше
         return
         
     logger.info(">>> [ПРЯМОЙ ВВОД ДИАПАЗОНА ДАТ]: %s", text)
@@ -479,10 +521,15 @@ def main():
     # чтобы не заходить в диалог, если пользователь просто вбил дату напрямую.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_date_range))
 
+    # Единый диалоговый менеджер для кастомного периода и фидбека
     conv_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex('^(📅 Выбрать период|📅 Select period)$'), choose_period_start)],
+        entry_points=[
+            MessageHandler(filters.Regex('^(📅 Выбрать период|📅 Select period)$'), choose_period_start),
+            MessageHandler(filters.Regex('^(✍️ Обратная связь|✍️ Send Feedback)$'), ask_feedback)
+        ],
         states={
             WAIT_DATE_RANGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_date_range)],
+            WAIT_FEEDBACK: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_feedback)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
