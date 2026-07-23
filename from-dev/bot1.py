@@ -55,7 +55,7 @@ TEXTS = {
         'btn_feedback': "✍️ Обратная связь",
         'btn_lang': "🌐 Сменить язык",
         'ask_range': "📅 Введите дату или диапазон дат, например:\n• 21.07.2026 - 23.07.2026\n• 21.07 - 23.07\n• 21.07",
-        'ask_feedback': "✍️ Пожалуйста, напишите ваш отзыв, пожелание или сообщение об ошибке:",
+        'ask_feedback': "✍️ *Мы будем рады вашей обратной связи!*\n\nПожалуйста, отправьте ваше сообщение (отзыв, пожелание или описание ошибки) прямо сюда 👇\n\n_Если вы передумали, отправьте команду_ /cancel",
         'feedback_thanks': "✅ Спасибо! Ваша обратная связь успешно отправлена.",
         'err_date_fmt': "❌ Не удалось распознать формат дат. Пожалуйста, введите в формате ДД.ММ.ГГГГ или ДД.ММ:",
         'cancel': "❌ Операция отменена.",
@@ -74,7 +74,7 @@ TEXTS = {
         'btn_feedback': "✍️ Send Feedback",
         'btn_lang': "🌐 Change language",
         'ask_range': "📅 Enter a date or a date range, for example:\n• 21.07.2026 - 23.07.2026\n• 21.07 - 23.07\n• 21.07",
-        'ask_feedback': "✍️ Please write your feedback, suggestion, or bug report:",
+        'ask_feedback': "✍️ *We would love to hear your feedback!*\n\nPlease type and send your message (comments, suggestions, or bug reports) right here 👇\n\n_If you want to cancel, send_ /cancel",
         'feedback_thanks': "✅ Thank you! Your feedback has been successfully sent.",
         'err_date_fmt': "❌ Failed to parse date format. Please enter as DD.MM.YYYY or DD.MM:",
         'cancel': "❌ Operation cancelled.",
@@ -402,7 +402,7 @@ async def ask_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(">>> [ЗАПРОС НА ОБРАТНУЮ СВЯЗЬ]")
     lang = get_user_lang(context)
     t = TEXTS[lang]
-    await update.message.reply_text(t['ask_feedback'])
+    await update.message.reply_text(t['ask_feedback'], parse_mode="Markdown")
     return WAIT_FEEDBACK
 
 async def receive_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -502,10 +502,8 @@ def main():
     app.add_handler(MessageHandler(filters.Regex('^(📅 Сегодня|📅 Today)$'), handle_today))
     app.add_handler(MessageHandler(filters.Regex('^(📆 За неделю|📆 For the week)$'), handle_week))
 
-    # Обработчик прямого ввода даты (вне диалога)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_date_range))
-
-    # Единый диалоговый менеджер для кастомного периода и фидбека
+    # Единый диалоговый менеджер для кастомного периода и фидбека.
+    # Должен стоять ПЕРЕД handle_direct_date_range, чтобы кнопки меню перехватывались первыми.
     conv_handler = ConversationHandler(
         entry_points=[
             MessageHandler(filters.Regex('^(📅 Выбрать период|📅 Select period)$'), choose_period_start),
@@ -518,6 +516,9 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     app.add_handler(conv_handler)
+
+    # Обработчик прямого ввода даты (вне диалога)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_date_range))
 
     logger.info("Telegram бот успешно запущен и готов к работе (RU / EN)")
     app.run_polling()
