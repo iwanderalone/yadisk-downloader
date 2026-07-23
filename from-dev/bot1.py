@@ -62,7 +62,7 @@ TEXTS = {
         'label_week': "неделю",
     },
     'EN': {
-        'welcome_lang': "🌐 Please select your language / Пожалуйста, выберите язык:",
+        'welcome_lang': "🌐 Please select your language / Пожалуйста, выведите язык:",
         'welcome_period': "👋 Hello! Please select a period:",
         'btn_today': "📅 Today",
         'btn_week': "📆 For the week",
@@ -389,6 +389,33 @@ async def receive_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await send_report(update, context, df[mask], label)
     return ConversationHandler.END
 
+# ==================== ПРЯМОЙ ВВОД ДАТЫ (ВНЕ ДИАЛОГА) ====================
+async def handle_direct_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    parsed = parse_user_date_range(text)
+    if not parsed:
+        return
+        
+    logger.info(">>> [ПРЯМОЙ ВВОД ДИАПАЗОНА ДАТ]: %s", text)
+    lang = get_user_lang(context)
+    t = TEXTS[lang]
+    
+    start_date, end_date = parsed
+    try:
+        df = download_table()
+    except Exception as e:
+        await update.message.reply_text(t['err_download'].format(e))
+        return
+        
+    mask = (df['Date'] >= start_date) & (df['Date'] <= end_date)
+    
+    if start_date == end_date:
+        label = start_date.strftime('%d.%m.%Y')
+    else:
+        label = f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
+        
+    await send_report(update, context, df[mask], label)
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_user_lang(context)
     t = TEXTS[lang]
@@ -424,6 +451,9 @@ def main():
     # Кнопки выбора периода (RU + EN)
     app.add_handler(MessageHandler(filters.Regex('^(📅 Сегодня|📅 Today)$'), handle_today))
     app.add_handler(MessageHandler(filters.Regex('^(📆 За неделю|📆 For the week)$'), handle_week))
+
+    # Обработчик прямого ввода даты (вне диалога)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_direct_date_range))
 
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^(📅 Выбрать период|📅 Select period)$'), choose_period_start)],
