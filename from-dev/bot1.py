@@ -171,7 +171,7 @@ def parse_date(val, sheet_name: str) -> datetime:
     return None
 
 # ==================== ПАРСЕР ДИАПАЗОНА ДАТ ====================
-def parse_user_date_range(text: str) -> Optional[tuple[datetime, datetime]]:
+def parse_user_date_range(text: str) -> tuple[datetime, datetime] | None:
     text = text.strip()
     date_pattern = r'(\d{1,2})[\.\-/](\d{1,2})(?:[\.\-/](\d{2,4}))?'
     matches = re.findall(date_pattern, text)

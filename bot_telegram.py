@@ -172,7 +172,7 @@ def parse_date(val, sheet_name: str) -> datetime:
     return None
 
 # ==================== ПАРСЕР ДИАПАЗОНА ДАТ (ДЛЯ ВВОДА ПОЛЬЗОВАТЕЛЕМ) ====================
-def parse_user_date_range(text: str) -> Optional[tuple[datetime, datetime]]:
+def parse_user_date_range(text: str) -> tuple[datetime, datetime] | None:
     """
     Разбирает строку с одной датой или диапазоном дат.
     Поддерживает: '21.07.2026 - 23.07.2026', '21.07-23.07', '21.07.2026' и т.д.
@@ -372,7 +372,6 @@ async def choose_period_start(update: Update, context: ContextTypes.DEFAULT_TYPE
     logger.info(">>> [ЗАПРОС СВОЙ ПЕРИОД]")
     lang = get_user_lang(context)
     t = TEXTS[lang]
-    # Запрашиваем ввод диапазона одним сообщением
     await update.message.reply_text(t['ask_range'])
     return WAIT_DATE_RANGE
 
