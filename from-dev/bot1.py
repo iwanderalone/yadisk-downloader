@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -38,7 +39,7 @@ YANDEX_VD_HASH = os.getenv("YANDEX_VD_HASH")
 REMOTE_FILE_PATH = os.getenv("YANDEX_FILE_PATH", "table.xlsx")
 
 CACHE_LIFETIME = 300
-WAIT_START_DATE, WAIT_END_DATE = range(2)
+WAIT_DATE_RANGE = 0
 
 _cache = {"df": None, "last_fetch": datetime.min}
 
@@ -51,10 +52,8 @@ TEXTS = {
         'btn_week': "📆 За неделю",
         'btn_custom': "📅 Выбрать период",
         'btn_lang': "🌐 Сменить язык",
-        'ask_start': "📅 Введите начальную дату (ДД.ММ.ГГГГ):",
-        'ask_end': "📅 Введите конечную дату (ДД.ММ.ГГГГ):",
-        'err_date_fmt': "❌ Неверный формат даты. Введите дату в формате ДД.ММ.ГГГГ:",
-        'err_date_order': "❌ Конечная дата раньше начальной. Введите еще раз:",
+        'ask_range': "📅 Введите дату или диапазон дат (например:\n• `21.07.2026 - 23.07.2026`\n• `21.07 - 23.07`\n• `21.07`):",
+        'err_date_fmt': "❌ Не удалось распознать формат дат. Пожалуйста, введите в формате ДД.ММ.ГГГГ или ДД.ММ:",
         'cancel': "❌ Выбор периода отменён.",
         'no_records': "📭 На выбранный период записей не найдено.",
         'caption': "📄 События за {}",
@@ -69,10 +68,8 @@ TEXTS = {
         'btn_week': "📆 For the week",
         'btn_custom': "📅 Select period",
         'btn_lang': "🌐 Change language",
-        'ask_start': "📅 Enter start date (DD.MM.YYYY):",
-        'ask_end': "📅 Enter end date (DD.MM.YYYY):",
-        'err_date_fmt': "❌ Invalid date format. Enter as DD.MM.YYYY:",
-        'err_date_order': "❌ End date is before start date. Enter again:",
+        'ask_range': "📅 Enter a date or a date range (for example:\n• `21.07.2026 - 23.07.2026`\n• `21.07 - 23.07`\n• `21.07`):",
+        'err_date_fmt': "❌ Failed to parse date format. Please enter as DD.MM.YYYY or DD.MM:",
         'cancel': "❌ Period selection cancelled.",
         'no_records': "📭 No records found for the selected period.",
         'caption': "📄 Events for {}",
@@ -104,13 +101,6 @@ def get_yandex_client() -> YandexSharedDiskClient:
 
 # ==================== УНИВЕРСАЛЬНЫЙ ПАРСЕР ДАТЫ ====================
 def parse_date(val, sheet_name: str) -> datetime:
-    """
-    Интеллектуальный парсер даты. Поддерживает форматы:
-    - Объекты datetime / Timestamp (из Excel)
-    - Строки вида '21.07.2026'
-    - Текст месяца без года: '5 July', '5 июля' (год берется из названия листа)
-    - Текст месяца с годом: '5 July 2026', '5 июля 2025'
-    """
     if pd.isna(val):
         return None
     if isinstance(val, (datetime, pd.Timestamp)):
@@ -120,14 +110,12 @@ def parse_date(val, sheet_name: str) -> datetime:
     if not val_str:
         return None
         
-    # 1. Пробуем стандартные форматы с разделителями
     for fmt in ('%d.%m.%Y', '%d.%m.%y', '%Y-%m-%d'):
         try:
             return pd.to_datetime(val_str, format=fmt)
         except Exception:
             continue
             
-    # 2. Пробуем авто-парсинг pandas (для англоязычных форматов)
     try:
         dt = pd.to_datetime(val_str, errors='raise')
         if dt.year <= 1900 or dt.year == 2001:
@@ -141,7 +129,6 @@ def parse_date(val, sheet_name: str) -> datetime:
     except Exception:
         pass
         
-    # 3. Ручной разбор для русскоязычных месяцев (например, '5 июля', '5 июля 2027')
     months_ru = {
         'янв': 1, 'фев': 2, 'мар': 3, 'апр': 4, 'май': 5, 'мая': 5,
         'июн': 6, 'июл': 7, 'авг': 8, 'сен': 9, 'окт': 10, 'ноя': 11, 'дек': 12
@@ -183,6 +170,36 @@ def parse_date(val, sheet_name: str) -> datetime:
         
     return None
 
+# ==================== ПАРСЕР ДИАПАЗОНА ДАТ ====================
+def parse_user_date_range(text: str) -> Optional[tuple[datetime, datetime]]:
+    text = text.strip()
+    date_pattern = r'(\d{1,2})[\.\-/](\d{1,2})(?:[\.\-/](\d{2,4}))?'
+    matches = re.findall(date_pattern, text)
+    
+    if not matches:
+        return None
+        
+    dates = []
+    current_year = datetime.now().year
+    
+    for match in matches:
+        day = int(match[0])
+        month = int(match[1])
+        year = int(match[2]) if match[2] else current_year
+        if year < 100:
+            year += 2000
+        try:
+            dates.append(datetime(year, month, day))
+        except ValueError:
+            return None
+            
+    if len(dates) == 1:
+        return dates[0], dates[0]
+    elif len(dates) >= 2:
+        return min(dates[0], dates[1]), max(dates[0], dates[1])
+        
+    return None
+
 # ==================== СКАЧИВАНИЕ С ОБЩЕГО ДИСКА ====================
 def download_table() -> pd.DataFrame:
     now = datetime.now()
@@ -221,7 +238,6 @@ def download_table() -> pd.DataFrame:
         df['Date'] = df['Date'].ffill()
         df.dropna(subset=['Date'], inplace=True)
         
-        # Применяем интеллектуальный парсер к датам
         df['Date'] = df['Date'].apply(lambda val: parse_date(val, sheet_name))
         df.dropna(subset=['Date'], inplace=True)
         
@@ -343,42 +359,33 @@ async def handle_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def choose_period_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_user_lang(context)
     t = TEXTS[lang]
-    await update.message.reply_text(t['ask_start'])
-    return WAIT_START_DATE
+    await update.message.reply_text(t['ask_range'])
+    return WAIT_DATE_RANGE
 
-async def receive_start_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_user_lang(context)
     t = TEXTS[lang]
     text = update.message.text.strip()
-    try:
-        start_date = datetime.strptime(text, '%d.%m.%Y')
-    except ValueError:
+    
+    parsed = parse_user_date_range(text)
+    if not parsed:
         await update.message.reply_text(t['err_date_fmt'])
-        return WAIT_START_DATE
-    context.user_data['start_date'] = start_date
-    await update.message.reply_text(t['ask_end'])
-    return WAIT_END_DATE
-
-async def receive_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = get_user_lang(context)
-    t = TEXTS[lang]
-    text = update.message.text.strip()
-    try:
-        end_date = datetime.strptime(text, '%d.%m.%Y')
-    except ValueError:
-        await update.message.reply_text(t['err_date_fmt'])
-        return WAIT_END_DATE
-    start_date = context.user_data['start_date']
-    if end_date < start_date:
-        await update.message.reply_text(t['err_date_order'])
-        return WAIT_END_DATE
+        return WAIT_DATE_RANGE
+        
+    start_date, end_date = parsed
     try:
         df = download_table()
     except Exception as e:
         await update.message.reply_text(t['err_download'].format(e))
         return ConversationHandler.END
+        
     mask = (df['Date'] >= start_date) & (df['Date'] <= end_date)
-    label = f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
+    
+    if start_date == end_date:
+        label = start_date.strftime('%d.%m.%Y')
+    else:
+        label = f"{start_date.strftime('%d.%m.%Y')} – {end_date.strftime('%d.%m.%Y')}"
+        
     await send_report(update, context, df[mask], label)
     return ConversationHandler.END
 
@@ -400,7 +407,6 @@ async def send_report(update: Update, context: ContextTypes.DEFAULT_TYPE, df: pd
 
 # ==================== ЗАПУСК ====================
 def main():
-    # Заново считываем актуальный токен бота из .env
     token = os.getenv("TELEGRAM_BOT_TOKEN") or BOT_TOKEN
     if not token:
         logger.error("TELEGRAM_BOT_TOKEN не задан! Пожалуйста, укажите его в .env файле.")
@@ -422,8 +428,7 @@ def main():
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex('^(📅 Выбрать период|📅 Select period)$'), choose_period_start)],
         states={
-            WAIT_START_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_start_date)],
-            WAIT_END_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_end_date)],
+            WAIT_DATE_RANGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_date_range)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
