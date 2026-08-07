@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import html
 from datetime import datetime, timedelta
 from io import BytesIO
 import pandas as pd
@@ -252,6 +253,15 @@ def download_table() -> pd.DataFrame:
         df['Date'] = df['Date'].apply(lambda val: parse_date(val, sheet_name))
         df.dropna(subset=['Date'], inplace=True)
         
+        # Drop empty rows where only 'Date' is set (after ffill has already done its job)
+        non_date_cols = [c for c in df.columns if c != 'Date']
+        if non_date_cols:
+            non_empty_mask = df[non_date_cols].apply(
+                lambda r: any(pd.notna(v) and str(v).strip() != '' for v in r),
+                axis=1
+            )
+            df = df[non_empty_mask]
+        
         dfs.append(df)
 
     full_df = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
@@ -425,22 +435,23 @@ async def receive_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Пересылаем отзыв администратору
     admin_id = os.getenv("ADMIN_TELEGRAM_ID", ADMIN_TELEGRAM_ID)
     if admin_id:
-        username_str = f"@{user.username}" if user.username else "нет username"
-        first_name = user.first_name or ""
-        last_name = user.last_name or ""
+        username_str = f"@{html.escape(user.username)}" if user.username else "нет username"
+        first_name = html.escape(user.first_name or "")
+        last_name = html.escape(user.last_name or "")
         name_str = f"{first_name} {last_name}".strip() or "Без имени"
+        escaped_feedback = html.escape(feedback_text)
         
         admin_message = (
-            f"🔔 *Получен новый отзыв!*\n\n"
-            f"👤 *Отправитель:* {name_str} ({username_str})\n"
-            f"🆔 *ID:* `{user.id}`\n\n"
-            f"📝 *Текст отзыва:*\n{feedback_text}"
+            f"🔔 <b>Получен новый отзыв!</b>\n\n"
+            f"👤 <b>Отправитель:</b> {name_str} ({username_str})\n"
+            f"🆔 <b>ID:</b> <code>{user.id}</code>\n\n"
+            f"📝 <b>Текст отзыва:</b>\n{escaped_feedback}"
         )
         try:
             await context.bot.send_message(
                 chat_id=admin_id,
                 text=admin_message,
-                parse_mode="Markdown"
+                parse_mode="HTML"
             )
             logger.info("Отзыв успешно переслан администратору ID=%s", admin_id)
         except Exception as e:
